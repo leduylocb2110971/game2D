@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+
+</head>
+<body style="background: black; text-align: center; margin-top: 100px;">
+    <script>
+
+
+
+        var stars;
+        var score = 0;
+        var scoreText;
+        class Bullet extends Phaser.Physics.Arcade.Image
+        {
+            fire (x, y, vx, vy)
+            {
+                this.enableBody(true, x, y, true, true);
+                this.setVelocity(vx, vy);
+            }
+
+            onCreate ()
+            {
+                this.disableBody(true, true);
+                // this.body.collideWorldBounds = true;
+                // this.body.onWorldBounds = true;
+            }
+
+            onWorldBounds ()
+            {
+                // this.disableBody(true, true);
+            }
+        }
+
+        class Bullets extends Phaser.Physics.Arcade.Group
+        {
+            constructor (world, scene, config)
+            {
+                super(
+                    world,
+                    scene,
+                    { ...config, classType: Bullet, createCallback: Bullets.prototype.onCreate }
+                );
+            }
+
+            fire (x, y, vx, vy)
+            {
+                const bullet = this.getFirstDead(false);
+
+                if (bullet)
+                {
+                    bullet.fire(x, y, vx, vy);
+                }
+            }
+
+            onCreate (bullet)
+            {
+                bullet.onCreate();
+            }
+
+            poolInfo ()
+            {
+                return `${this.name} total=${this.getLength()} active=${this.countActive(true)} inactive=${this.countActive(false)}`;
+            }
+        }
+
+        class Example extends Phaser.Scene {
+            showDebug = false;
+            map;
+            player;
+            bullets;
+            enemy;
+            enemyBullets;
+            plasma;
+            helpText;
+            debugGraphics;
+            
+            
+
+            preload() {
+                this.load.image('tiles', 'background.png');
+                this.load.image('tiles', 'map.png');
+                this.load.image('player', 'player1.png');
+                this.load.image('player', 'player2.png');
+                this.load.tilemapCSV('map', 'map.csv');
+                this.load.image('bullet','bullet.png');
+                this.load.image('enemy','enemy.png');
+                this.load.image('enemyBullet','bullet.png');
+
+            }
+
+            create() {
+                
+                this.map = this.make.tilemap({ key: 'map', tileWidth: 60, tileHeight: 60 });
+                const tileset = this.map.addTilesetImage('tiles');
+                const layer = this.map.createLayer(0, tileset, 0, 0);
+
+                this.map.setCollisionBetween(1, 2);
+
+                this.player = this.physics.add.sprite(450, 550, 'player', 1).setBounce(0.1).setScale(2);
+                
+
+                this.physics.add.collider(this.player, layer);
+                this.bullets = this.add.existing(new Bullets(this.physics.world, this, { name: 'bullets' }));
+                this.bullets.createMultiple({
+                    key: 'bullet',
+                    quantity: 1000
+                });
+                this.input.on('pointerdown', () =>{
+                    this.bullets.fire(this.player.x, this.player.y, 0, -300);
+                });
+                this.enemy = this.physics.add.image(400, 200, 'enemy', 1).setScale(2);
+                this.debug = this.add.graphics();
+                this.enemy.setBodySize(160, 64);
+                // Hit points
+                this.enemy.state = 5;
+
+                this.enemyMoving = this.tweens.add({
+                    targets: this.enemy.body.velocity,
+                    props: {
+                        x: { from: 150, to: -150, duration: 4000 },
+                        y: { from: 100, to: -100, duration: 2000 }
+                    },
+                    ease: 'Sine.easeInOut',
+                    yoyo: true,
+                    repeat: -1
+                });
+                this.enemyBullets = this.add.existing(new Bullets(this.physics.world, this, { name: 'enemyBullets' })
+            );
+                this.enemyBullets.createMultiple({
+                key: 'enemyBullet',
+                quantity: 500
+            });
+            this.enemyFiring = this.time.addEvent({
+                delay: 750,
+                loop: true,
+                callback: () =>
+                {
+                    this.enemyBullets.fire(this.enemy.x, this.enemy.y + 32, 0, 150);
+                }
+            });
+            this.plasma = this.add.particles(0, 0, 'bullet', {
+                alpha: { start: 1, end: 0, ease: 'Cubic.easeIn' },
+                blendMode: Phaser.BlendModes.SCREEN,
+                frequency: -1,
+                lifespan: 500,
+                radial: false,
+                scale: { start: 1, end: 5, ease: 'Cubic.easeOut' }
+            });
+
+            this.text = this.add.text(0, 480, '', {
+                font: '16px monospace',
+                fill: 'aqua'
+            });
+
+            this.physics.add.overlap(this.enemy, this.bullets, (enemy, bullet) =>
+            {
+                const { x, y } = bullet.body.center;
+
+                enemy.state -= 1;
+                bullet.disableBody(true, true);
+                this.plasma.setSpeedY(0.2 * bullet.body.velocity.y).emitParticleAt(x, y);
+
+                if (enemy.state <= 0)
+                {
+                    enemy.setFrame(3);
+                    enemy.body.checkCollision.none = true;
+                    this.enemyFiring.remove();
+                    this.enemyMoving.stop();
+                }
+            });
+
+            this.physics.add.overlap(this.player, this.enemyBullets, (player, bullet) =>
+            {
+                const { x, y } = bullet.body.center;
+
+                bullet.disableBody(true, true);
+                this.plasma.setSpeedY(0.2 * bullet.body.velocity.y).emitParticleAt(x, y);
+            });
+
+            this.physics.world.on('worldbounds', (body) =>
+            {
+                body.gameObject.onWorldBounds();
+            });
+
+            this.input.on('pointermove', (pointer) =>
+            {
+                this.player.x = pointer.worldX;
+            });
+
+            this.input.on('pointerdown', () =>
+            {
+                this.bullets.fire(this.player.x, this.player.y, 0, -300);
+            });  
+
+            
+
+
+                
+                // this.anims.create({
+                //     key: 'left',
+                //     frames: [ { key: 'player', frame: 0 } ],
+                //     frameRate: 4,
+                //     repeat: 1
+                // });
+
+                // this.anims.create({
+                //     key: 'turn',
+                //     frames: [ { key: 'player', frame: 1 } ],
+                //     frameRate: 20
+                // });
+
+                // this.anims.create({
+                //     key: 'right',
+                //     frames: this.anims.generateFrameNumbers('player', { start: 1, end: 2 }),
+                //     frameRate: 4,
+                //     repeat: 1
+                // });
+
+
+
+                // this.player.setCollideWorldBounds(true);
+
+
+                // this.helpText.setScrollFactor(0);
+
+
+                this.cursors = this.input.keyboard.createCursorKeys();
+
+                // stars = this.physics.add.group({
+                //     key: 'star',
+                //     repeat: 11,
+                //     setXY: { x: 225, y: 0, stepX: 100 }
+                // });
+
+                // stars.children.iterate(function (child) {
+
+                //     child.setBounceY(Phaser.Math.FloatBetween(0.1, 0.2));
+
+                // });
+
+                // this.cameras.main.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
+                // this.cameras.main.startFollow(this.player);
+
+
+                // scoreText = this.add.text(16, 16, 'score: 0', { fontSize: '32px', fill: '#000' });
+
+                // this.physics.add.collider(stars, layer);
+
+                // this.physics.add.overlap(this.player, stars, collectStar, null, this);
+
+
+             }
+            update(time, delta) {
+
+                this.player.body.setVelocityX(0);
+                this.player.body.setVelocityY(0);
+
+                if (this.cursors.left.isDown)
+                {
+                    this.player.body.setVelocityX(-200);
+
+                    // this.player.anims.play('left', true);
+
+                }
+                else if (this.cursors.right.isDown)
+                {
+                    this.player.body.setVelocityX(200);
+
+                    // this.player.anims.play('right', true);
+                }
+                else if  (this.cursors.up.isDown)
+                {
+                    this.player.body.setVelocityY(-200);
+
+                    // this.player.anims.play('left', true);
+
+                }
+                else if  (this.cursors.down.isDown)
+                {
+                    this.player.body.setVelocityY(200);
+
+                    // this.player.anims.play('left', true);
+
+                }
+                else
+                {
+                    this.player.setVelocityX(0);
+
+                    // this.player.anims.play('turn');
+                }
+
+                        // Jumping
+                // if ((this.cursors.space.isDown || this.cursors.up.isDown) && this.player.body.onFloor())
+                //     {
+                //         this.player.body.setVelocityY(-400);
+                //     }
+
+            
+             }
+             
+            
+        }
+
+        // function collectStar (player, star)
+        // {
+        //     star.disableBody(true, true);
+
+        //     score += 10;
+        //     scoreText.setText('Score: ' + score);
+        // }
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 900,
+            height: 600,
+            backgroundColor: '#2d2d2d',
+            parent: 'phaser-example',
+            pixelArt: true,
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 }
+                }
+            },
+            scene: Example
+        };
+
+        const game = new Phaser.Game(config);
+    </script>
+</body>
+</html>
